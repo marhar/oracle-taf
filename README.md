@@ -22,22 +22,6 @@ The files are:
     taf-scenarios   run various start/stop scenarios
     taf-several     run many taf scenarios in multiple windows
 
-- taf-demo.py:     demonstrating the various TAF client side features
-- taf-control:     control db nodes: start/stop/reboot
-- taf-monitor:     watch connection status NEEDS GENERALIZING
-- taf-monitor.sh:  simple shell version of the monitor
-- taf-scenarios:   run various start/stop scenarios
-- taf-several:     run many taf scenarios in multiple windows
-
-program        | note
---------------:|:---------------------------------------------------
-taf-demo.py    | demonstrating the various TAF client side features
-taf-control    | control db nodes: start/stop/reboot
-taf-monitor    | watch connection status NEEDS GENERALIZING
-taf-monitor.sh | simple shell version of the monitor
-taf-scenarios  | run various start/stop scenarios
-taf-several    | run many taf scenarios in multiple windows
-
 taf-demo usage
 --------------
 

@@ -1,0 +1,26 @@
+#!/bin/sh
+
+alldemos="
+     reconn
+     select
+     dual
+     xtable
+     idle
+     opentrans
+     pertrans
+     shorttrans
+     luckytrans
+"
+
+revdemos=`for x in $alldemos;do
+    echo $x
+done|cat -n | sort -nr | cut -c 8-`
+
+picked=$alldemos
+
+for x in $picked;do
+    wlist=`xdotool search --title $x`
+    for w in $wlist; do
+        xdotool windowraise $w
+    done
+done

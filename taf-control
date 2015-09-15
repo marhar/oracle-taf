@@ -1,0 +1,123 @@
+#!/bin/sh
+# taf-control -- for taf demos
+#
+# taf-control start nodenums...
+# taf-control stop nodenums...
+# taf-control stop mode nodenums...
+# taf-control bounce mode nodenums...
+# taf-control reboot nodenums...
+# taf-control niceboot nodenums...
+#
+# Note: if you are running shutdown and run a second instance,
+#       you will get:
+#           ORA-10997: another startup/shutdown operation of this
+#                      instance inprogress
+#           ORA-09968: unable to lock file
+
+
+TIME='/usr/bin/time -f %E'
+
+# set these in taf.cfg
+DB=DBSERVICENAME
+SSHCONN=oracle@rachost1
+SSHROOT=root@rachost1
+
+. ./taf.cfg
+
+function startit()
+{
+    if test $# -ne 1; then echo usage: startit instno 1>&2; exit 1; fi
+    echo -n $DB$1 'start...  '
+    # SOOOO $DB$1 must be replaced as a parameter
+    x="$TIME srvctl start instance -d $DB -i $DB$1"
+    # I need to source .bashprofile on my node, YMMV
+    ssh $SSHCONN . .bash_profile\; $x
+}
+
+function stopit()
+{
+    if test $# -ne 2; then echo usage: stopit11 mode instno 1>&2; exit 1; fi
+    mode=$1
+    inst=$2
+    if test $mode = translocal; then
+        mode2="transactional local"
+    else
+        mode2=$mode
+    fi
+    echo -n $TNAME$inst stop $mode2... ''
+    echo sqlplus -L -S $SYSCONN@$TNAME$inst as sysdba
+
+    echo "shutdown $mode2" |
+        $TIME sqlplus -L -S $SYSCONN@$TNAME$inst as sysdba |
+        egrep -v \
+         '^Database closed.$|^Database dismounted.$|^ORACLE instance shut down.$'
+}
+
+function reboot()
+{
+    if test $# -ne 1; then echo usage: reboot instno 1>&2; exit 1; fi
+    echo -n $TNAME$1 'reboot...  '
+    # I need to source .bashprofile on my node, YMMV
+    ssh $SSHROOT$1 . .bash_profile\; reboot
+}
+
+function niceboot()
+{
+    if test $# -ne 1; then echo usage: nicereboot instno 1>&2; exit 1; fi
+    echo -n $TNAME$1 'niceboot...  '
+    stopit immediate $1
+    reboot $1
+}
+
+function stopit_via_ssh()
+{
+    if test $# -ne 2; then echo usage: stopit instno mode 1>&2; exit 1; fi
+    x="$TIME srvctl stop instance -d $DB -i $DB$1"
+    echo -n $DB$1 'stop...  '
+    ssh $SSHCONN . .bash_profile\; $x
+}
+
+if test $# -eq 0; then
+    echo usage: $0 'start|stop|bounce|reboot' nodes...
+    echo example: $0 3
+    exit 1
+fi
+
+cmd=$1
+shift
+
+#----------------------------------
+if test $cmd = start; then
+    for i in $*;do
+        startit $i
+    done
+#----------------------------------
+elif test $cmd = stop; then
+    mode=immediate
+    if test .$1 = .immediate -o .$1 = .normal -o .$1 = .transactional -o .$1 = .translocal; then
+        mode=$1
+        shift
+    fi
+    for i in $*;do
+        stopit $mode $i
+    done
+#----------------------------------
+elif test $cmd = bounce; then
+    for i in $*;do
+        stopit immediate $i
+        startit $i
+    done
+#----------------------------------
+elif test $cmd = reboot; then
+    for i in $*;do
+        reboot $i
+    done
+#----------------------------------
+elif test $cmd = niceboot; then
+    for i in $*;do
+        niceboot $i
+    done
+#----------------------------------
+else
+    echo bad command: $cmd
+fi

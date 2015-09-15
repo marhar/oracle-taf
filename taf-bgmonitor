@@ -1,0 +1,7 @@
+#!/bin/sh
+
+while true; do
+	taf-monitor --scroll --once $1&
+	echo monitors: `ps auxww|grep '[t]af-monitor'|wc -l`
+	sleep 1
+done

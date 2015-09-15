@@ -1,0 +1,242 @@
+#!/usr/anim/bin/pypix
+"""
+monitor taf connections in full screen or scrolling mode
+make your window about 120 wide for nicest formatting of error msgs
+taf-monitor [options] tns-wildcards...
+taf-monitor mhx tmpltest*
+
+TODO: catch sigwinch?
+TODO: timer around connect?
+"""
+
+import sys
+import re
+import os
+import popen2
+import optparse
+import time
+import cx_Oracle
+import atexit
+import signal
+
+#-----------------------------------------------------------------------
+# poor man's terminfo, curses pkg had problems(???)
+termcache={}
+def ticommon(cmd):
+    if termcache.has_key(cmd) == False:
+        (fd,junk)=popen2.popen2('tput '+cmd)
+        termcache[cmd]=fd.read()
+        fd.close()
+        junk.close()
+    return termcache[cmd]
+def ticup(r,c): return ticommon('cup %d %d'%(r,c))
+def tihome(): return ticommon('home')
+def tiel(): return ticommon('el')
+def tied(): return ticommon('ed')
+
+#-----------------------------------------------------------------------
+def pat(r,c,s,doclear=False):
+    """print a string"""
+    if opts.scroll:
+        x=s
+    else:
+        x=ticup(r,c)+s
+        if doclear:
+            x+=tiel()
+        flicker=False
+        if flicker==False:
+            x+=ticup(5,0)
+    sys.stdout.write(x)
+    sys.stdout.flush()
+
+#-----------------------------------------------------------------------
+def patclear():
+    """clear the screen"""
+    if opts.scroll == False:
+        sys.stdout.write(tihome()+tied())
+        sys.stdout.flush()
+
+#-----------------------------------------------------------------------
+def alarmhandler(signame,frame):
+    print 'alarm: exiting'
+    sys.exit(1)
+
+errs={}
+
+#-----------------------------------------------------------------------
+def doserial(rr,tnslist,mxlen):
+    """serial checking of nodes"""
+    for node in tnslist:
+        rr+=1
+        pat(rr,0,'%s %s: '%(time.strftime('%T'),node))
+
+        connstr='%s@%s'%(opts.conn,node)
+        try:
+            msg='OK'
+            conn=cx_Oracle.connect(connstr)
+            conn.close()
+        except cx_Oracle.DatabaseError,e:
+            msg=e.message.message.strip()
+            if errs.has_key(msg):
+                errs[msg]+=1
+            else:
+                errs[msg]=1
+        pat(rr,mxlen+11,msg+'\n',True)
+    return rr
+
+#-----------------------------------------------------------------------
+def dofork(rr,tnslist,mxlen):
+    """parallel checking of nodes"""
+    for node in tnslist:
+        rr+=1
+        if os.fork() == 0:
+            connstr='%s@%s'%(opts.conn,node)
+            pat(rr,0,'%s %s: '%(time.strftime('%T'),node))
+            try:
+                msg='OK'
+                conn=cx_Oracle.connect(connstr)
+                conn.close()
+            except cx_Oracle.DatabaseError,e:
+                msg=e.message.message.strip()
+            pat(rr, mxlen+11, msg, True)
+            sys.exit(0)
+
+    for i in tnslist:
+        os.wait()
+    return rr
+
+#-----------------------------------------------------------------------
+def fork2_worker(node,connstr,rr,mxlen):
+    """worker process for fork2"""
+
+    while True:
+        pat(rr,0,'%s %s: '%(time.strftime('%T'),node))
+        try:
+            msg='OK'
+            conn=cx_Oracle.connect(connstr)
+            conn.close()
+        except cx_Oracle.DatabaseError,e:
+            msg=e.message.message.strip()
+        pat(rr, mxlen+11, msg, True)
+        time.sleep(1)
+
+#-----------------------------------------------------------------------
+childlist=[]
+def fork2_killer():
+    """kill children in case something happens to parent"""
+    for child in childlist:
+        os.kill(child,15)
+
+#-----------------------------------------------------------------------
+def dofork2(rr,tnslist,mxlen):
+    """parallel checking of nodes, persistent forked workers"""
+    pat(0,0,tied())
+    for node in tnslist:
+        rr+=1
+        pid=os.fork()
+        if pid == 0:
+            connstr='%s@%s'%(opts.conn,node)
+            fork2_worker(node,connstr,rr,mxlen)
+        else:
+            childlist.append(pid)
+
+    atexit.register(fork2_killer)
+    while True:
+        pat(0,0,time.asctime())
+        time.sleep(1)
+
+#-----------------------------------------------------------------------
+def tnswildcard(inp):
+    """expand the given wildcards into a list of tns entries"""
+    tnsitems=[]
+
+    for s in inp:
+        t=s.lower()
+        t=t.replace('?','[a-z0-9_]')
+        t=t.replace('*','[a-z0-9_]*')
+        q='^ *('+t+') *='
+        # scan the whole file each time to preserve the order of args
+        # fortunately the file is small so it is not such a big deal
+        fd=open(opts.tns)
+        for line in fd:
+            line=line.lower()
+            line=line[0:len(line)-1]
+            m=re.search(q,line)
+            if m is not None:
+                tnsitems.append(m.group(1))
+        fd.close()
+    return tnsitems
+
+#-----------------------------------------------------------------------
+optspec=[
+("conn",   'taftest/oracle',   "connect string"),
+("tns",    '/etc/tnsnames.ora',"tns file path"),
+("skiptns",False,              "skip tns wildcarding"),
+("scroll", False,              "scroll output,no fullscreen"),
+("stats",  False,              "print stats,must use serial option"),
+("fork",   False,              "fork checking"),
+("fork2",  False,              "fork checking,alternate version"),
+("once",   False,              "attempt connect one time and exit"),
+]
+
+#-----------------------------------------------------------------------
+def main():
+    """the main thing is to make the main thing the main thing"""
+
+
+    parser = optparse.OptionParser()
+    for (zlong,zdefault,zhelp) in optspec:
+        if zdefault == False:
+            parser.add_option('','--'+zlong,default=False,
+                              action="store_true",help=zhelp)
+        else:
+            parser.add_option('','--'+zlong,default=zdefault, help=zhelp)
+
+    global opts
+    (opts,args) = parser.parse_args(sys.argv)
+    if len(args) < 2:
+        sys.stderr.write('no tnsnames specified!\n')
+        parser.print_help()
+        sys.exit(1)
+    if opts.skiptns:
+        tnslist=args[1:]
+    else:
+        tnslist=tnswildcard(args[1:])
+    tnsmaxlen=max([len(x) for x in tnslist])
+
+    patclear()
+    while True:
+        if opts.once:
+            signal.signal(signal.SIGALRM, alarmhandler)
+            signal.alarm(5)
+
+        #pat(0,0,time.asctime()+'\n')
+        rr=1
+        if opts.fork:
+            rr=dofork(rr,tnslist,tnsmaxlen)
+        elif opts.fork2:
+            rr=dofork2(rr,tnslist,tnsmaxlen)
+        else:
+            rr=doserial(rr,tnslist,tnsmaxlen)
+
+        if opts.stats:
+            rr+=1
+            pat(rr,0,'--\n')
+            aa=errs.keys()
+            aa.sort()
+            for m in aa:
+                rr+=1
+                pat(rr,0,'%s (%d)\n'%(m,errs[m]))
+            pat(rr,0,'\n')
+        #sys.stdout.write(tied())
+        sys.stdout.flush()
+        if opts.once:
+            sys.exit(0)
+        time.sleep(1)
+
+if __name__=='__main__':
+    try:
+        main()
+    except KeyboardInterrupt:
+        pass
+

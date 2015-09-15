@@ -1,0 +1,94 @@
+#!/bin/sh
+
+host=$1
+host=macbook
+
+. ./taf.cfg
+
+echo $1
+if test $1. = linux.; then
+	ww=60
+	hh=7
+	xx1=300
+	xx2=0
+	yy=0
+	dy=127
+elif test $1. = macbook.;then
+	ww=60
+	hh=7
+	xx1=300
+	xx2=0
+	yy=19
+	dy=104
+elif test $1. = mac.; then
+	ww=60
+	hh=10
+	xx1=300
+	xx2=0
+	yy=19
+	dy=144
+elif test $1. = fishbowl1.; then
+	# set projector 1400x1050 60hz
+	ww=60
+	hh=8
+	xx1=380
+	xx2=10
+	yy=19
+	dy=110
+elif test $1. = fishbowl2.; then
+	# set projector 1024x768 60hz
+	ww=60
+	hh=6
+	xx1=240
+	xx2=0
+	yy=0
+	dy=84
+else
+    echo usage: $0 linux/macbook/mac
+    exit 1
+fi
+
+alldemos="
+     reconn
+     select
+     dual
+     xtable
+     idle
+     opentrans
+     pertrans
+     shorttrans
+     luckytrans
+"
+
+thisdemo="
+     opentrans
+     pertrans
+     shorttrans
+"
+
+#default to all
+thisdemo=$alldemos
+
+touch /tmp/taflock
+for i in $thisdemo; do
+    gstring1=${ww}x${hh}-$xx1+$yy
+    gstring2=${ww}x${hh}-$xx2+$yy
+    echo $i $gstring1 $gstring2
+    yy=`expr $yy + $dy`
+    gnome-terminal --window-with-profile=TafDemo --disable-factory --class=TafDemo --name=$TNS1-$i --title=$TNS1-$i --geometry=$gstring1 -x sh -c \
+       "./taf-demo.py --node=3 --conn=taftest/oracle@$TNS1 $i;
+        echo done;while test -f /tmp/taflock; do sleep 1;done" &
+    gnome-terminal --window-with-profile=TafDemo --disable-factory --class=TafDemo --name=$TNS2-$i --title=$TNS2-$i --geometry=$gstring2 -x sh -c \
+       "./taf-demo.py --node=3 --conn=taftest/oracle@$TNS2 $i;
+        echo done;while test -f /tmp/taflock; do sleep 1;done" &
+done
+
+sleep 5
+./shuffle2
+#xlsclients |grep $TNS2-|awk '{print "xraise",$2}'|sh
+
+echo ""
+echo press enter to close other windows
+read a
+rm -f /tmp/taflock
+killall taf-demo.py

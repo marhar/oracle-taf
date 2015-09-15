@@ -1,0 +1,153 @@
+#!/usr/anim/bin/pypix
+"""
+watch node shutdown, report on straggling open transactions
+must connect to the particular node
+"""
+
+import sys
+import cx_Oracle
+import time
+import optparse
+
+#-----------------------------------------------------------------------
+def now():
+    """does anybody have the time?"""
+    return time.strftime('%T')
+
+#-----------------------------------------------------------------------
+def nodeconnect(connstr,preference=None):
+    """connect to oracle, possibly looking for a particular node"""
+    try:
+        if preference is None:
+            return cx_Oracle.connect(connstr)
+        else:
+            while True:
+                conn=cx_Oracle.connect(connstr)
+                myinstance=instance(conn)[0]
+                print now(),'got instance...',myinstance
+                if myinstance==preference:
+                    return conn
+                else:
+                    conn.close()
+    except cx_Oracle.DatabaseError,e:
+        # ORA-01033: ORACLE initialization or shutdown in progress
+        # ORA-12537: TNS:connection closed
+        # ORA-12528: TNS:listener: all appropriate instances are blocking
+        #            new connections
+        # ORA-12521: TNS:listener does not currently know of instance
+        #            requested in connect descriptor
+        # ORA-12520: TNS:listener could not find available handler for
+        #            requested type of server
+        if e.message.code in [1033,12537,12528,12521,12520]:
+            print 'RETRYING:', e.message.message.strip()
+            time.sleep(1)
+            return nodeconnect(connstr,preference)
+        else:
+            raise(e)
+
+#-----------------------------------------------------------------------
+def instance(conn):
+    """what instance are we connected to?"""
+    curs=conn.cursor()
+    try:
+        curs.execute("""select sys_context('userenv','instance'),
+                              sys_context('userenv','server_host') from dual""")
+        r=curs.fetchone()
+    except cx_Oracle.DatabaseError,e:
+        # ORA-25401: can not continue fetches
+        # ORA-25402: transaction must roll back
+        # ORA-25408: can not safely replay call
+        if e.message.code in [25401,25402,25408]:
+            ###print 'ignoring(case 1):', e.message.message.strip()
+            r=('unknown-instance','unknown-host')
+        else:
+            raise(e)
+    curs.close()
+    return r
+
+
+query="""
+    select nvl(to_char(t.start_date,'yyyy-mm-dd hh24:mi:ss'),'-') as "TranStart",
+           s.status,
+           s.inst_id,
+           'alter system kill session '''||s.sid||','||s.serial#||''' immediate;'  as "sid,ser",
+           s.username,
+           lower(s.osuser)||'@'||s.machine as "OSUSER",
+           process,
+           program,
+           module,
+           action,
+           s.client_info
+      from gv$transaction t, dba_rollback_segs r, gv$session s
+     where t.xidusn = r.segment_id
+           and s.saddr = t.ses_addr
+           and s.username <> 'SYS'
+           and s.inst_id=:1
+  order by t.start_date,s.status
+"""
+
+#-----------------------------------------------------------------------
+def process(connstr,node):
+
+    # curs1 does all the work, curs2 just keeps an open transaction
+    conn1=nodeconnect(connstr,node)
+    conn1.module='taf-watch-shutdown'
+    conn1.commit()
+
+    curs1=conn1.cursor()
+    curs2=conn1.cursor()
+
+    print 'setting up...'
+    try:
+        curs1.execute('drop table tmp_shutdown_monitor_tmp')
+    except cx_Oracle.DatabaseError,e:
+        # ORA-00942: table or view does not exist
+        if e.message.code==942:
+            pass
+    curs1.execute('create table tmp_shutdown_monitor_tmp(x number)')
+    curs2.execute('insert into tmp_shutdown_monitor_tmp values(1)')
+
+    try:
+        n=99
+        while n > 1:
+            curs1.execute(query,[node])
+            rows=curs1.fetchall()
+            n=len(rows)
+            print '--',now()
+            print 'open transactions:',n
+            for r in rows:
+                print r
+
+            if n > 1:
+                time.sleep(5)
+            else:
+                print 'all transactions accounted for...'
+    except KeyboardInterrupt:
+        pass
+
+    # clean up in a new connection, since the node might be going down
+    print 'cleaning up...'
+    conn1.rollback()
+    conn1.close()
+    conn3=nodeconnect(connstr,None)
+    curs3=conn3.cursor()
+    curs3.execute('drop table tmp_shutdown_monitor_tmp')
+    conn3.close()
+
+
+#-----------------------------------------------------------------------
+def main():
+    """the main thing is to keep the main thing the main thing"""
+
+    parser = optparse.OptionParser()
+    parser.add_option( "", "--node", help="connect to node")
+    parser.add_option( "", "--conn", help="connect string")
+    (opts, args) = parser.parse_args(sys.argv)
+
+    process(opts.conn,opts.node)
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        pass

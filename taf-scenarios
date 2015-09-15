@@ -1,0 +1,37 @@
+#!/bin/bash
+
+if test $# -ne 1; then
+	echo usage: $0 mode 1>&2
+	exit 1
+fi
+
+mode=$1
+
+if test .$mode = .1; then
+	echo scenario 1 -- whut
+
+	taf-control stop 3
+	taf-control start 3 &
+	taf-control stop 2
+	taf-control start 2 &
+	taf-control stop 1
+	taf-control start 1
+	wait
+
+elif test .$mode = .2; then
+	echo scenario 1 -- whut
+elif test .$mode = .3; then
+	echo scenario 1 -- whut
+
+	(taf-control stop 3; taf-control start 3) &
+	(taf-control stop 2; taf-control start 2) &
+	(taf-control stop 1; taf-control start 1) &
+	wait
+else
+	echo bad mode: $mode
+
+	taf-control start 3 &
+	taf-control start 2 &
+	taf-control start 1 &
+	wait
+fi

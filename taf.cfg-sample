@@ -1,0 +1,15 @@
+##
+## taf.cfg -- customization for taf tests
+##
+
+# the database service name
+DB=tmpltest
+
+# sys connection for database
+SYSCONN=sys/secret
+
+# ssh connection to connect to a trac node as oracle
+SSHCONN=oracle@mytracnode
+
+# ssh connection to connect to a trac node as root
+SSHROOT=root@mytracnode
